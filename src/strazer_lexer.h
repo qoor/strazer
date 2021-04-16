@@ -59,6 +59,8 @@ class Lexer {
                         tok::TokenKind kind);
   bool LexCharConstant(Token& result, const char* cur_ptr, tok::TokenKind kind);
 
+  bool SkipBlockComment(const char* cur_ptr);
+
   const char* buf_start_;
   const char* buf_ptr_;
   const char* buf_end_;

@@ -283,3 +283,81 @@ bool Lexer::LexCharConstant(Token& result, const char* cur_ptr,
   result.SetLiteralData(tok_start);
   return true;
 }
+
+static bool IsEndOfBlockCommentWithEscapedNewLine(const char* cur_ptr) {
+  assert('\n' == cur_ptr[0] || '\r' == cur_ptr[0]);
+
+  --cur_ptr;
+
+  if ('\n' == cur_ptr[0] || '\r' == cur_ptr[0]) {
+    if (cur_ptr[0] == cur_ptr[1]) return false;
+    --cur_ptr;
+  }
+
+  bool has_space = false;
+  while (IsHorizontalWhitespace(*cur_ptr) || 0 == *cur_ptr) {
+    --cur_ptr;
+    has_space = true;
+  }
+
+  if ('\\' == *cur_ptr) {
+    if ('*' != cur_ptr[-1]) return false;
+  } else {
+    if ('/' != cur_ptr[0]) return false;
+
+    cur_ptr -= 2;
+  }
+
+  return true;
+}
+
+bool Lexer::SkipBlockComment(const char* cur_ptr) {
+  size_t char_size;
+  unsigned char c = GetCharAndSize(cur_ptr, char_size);
+  cur_ptr += char_size;
+  if (0 == c && cur_ptr == buf_end_ - 1) {
+    --buf_ptr_;
+    return false;
+  }
+
+  if ('/' == c) c = *cur_ptr++;
+
+  while (true) {
+    if (cur_ptr + 24 < buf_end_) {
+      while ('/' != c && 0 != ((intptr_t)cur_ptr & 0x0F)) c = *cur_ptr++;
+
+      if ('/' == c) goto found_slash;
+
+      while ('/' != cur_ptr[0] && '/' != cur_ptr[1] && '/' != cur_ptr[2] &&
+             '/' != cur_ptr[3] && cur_ptr + 4 < buf_end_) {
+        cur_ptr += 4;
+      }
+
+      c = *cur_ptr++;
+    }
+
+    while ('/' != c && '\0' != c) c = *cur_ptr++;
+
+    if ('/' == c) {
+    found_slash:
+      if ('*' == cur_ptr[-2]) break;
+
+      if ('\n' == cur_ptr[-2] || '\r' == cur_ptr[-2]) {
+        if (IsEndOfBlockCommentWithEscapedNewLine(cur_ptr - 2)) break;
+      }
+    } else if (0 == c && cur_ptr == buf_end_ - 1) {
+      --buf_ptr_;
+      return false;
+    }
+
+    c = *cur_ptr++;
+  }
+
+  if (IsHorizontalWhitespace(*cur_ptr)) {
+    SkipWhitespace();
+    return false;
+  }
+
+  buf_ptr_ = cur_ptr;
+  return false;
+}
