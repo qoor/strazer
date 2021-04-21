@@ -1,111 +1,102 @@
-#ifndef _STRAZER_PARSER_H
-#define _STRAZER_PARSER_H
+#ifndef _STRAZER_PREPROCESSOR_H
+#define _STRAZER_PREPROCESSOR_H
 
-#include <list>
-#include <stack>
-#include <string>
+#include <cassert>
+#include <memory>
 #include <vector>
 
-#include "strazer_cursor.h"
-#include "strazer_syscall.h"
+#include "strazer_identifier_table.h"
+#include "strazer_lexer.h"
+#include "strazer_token.h"
+#include "strazer_token_kinds.h"
+#include "strazer_utils.h"
 
-enum class ParenType { kInvalid, kSmall, kMiddle, kBig, kArrow, kDoubleQuote };
+namespace strazer {
 
-class PidNode {
- public:
-  PidNode() = default;
-  PidNode(PidNode* parent, pid_t pid, bool forked)
-      : pid_(pid), forked_(forked), parent_(parent) {}
-
-  PidNode& Childbirth(pid_t pid, bool fork) {
-    childs_.emplace_back(this, pid, fork);
-    return childs_.back();
-  }
-  bool DropChild(PidNode* child) {
-    if (!child) return false;
-    if (this == child) return true;
-
-    auto* parent = child->GetParent();
-    if (!parent) return false;
-    if (this == parent) return true;
-
-    parent->childs_.remove(*child);
-    return true;
-  }
-
-  PidNode* GetParent() { return parent_; }
-  PidNode* GetParent(int level) {
-    PidNode* p = nullptr;
-    for (p = this; p && 0 < level; --level, p = p->parent_) continue;
-    return parent_;
-  }
-
-  PidNode* FindPid(pid_t pid) {
-    if (!pid) return nullptr;
-    if (pid_ == pid) return this;
-
-    PidNode* node;
-    for (auto& child : childs_) {
-      if ((node = child.FindPid(pid))) return node;
-    }
-
-    return nullptr;
-  }
-
-  pid_t GetPid() const { return pid_; }
-  void SetPid(pid_t pid) {
-    if (0 == pid_ && childs_.empty()) pid_ = pid;
-  }
-
-  bool IsForked() const { return forked_; }
-
-  Syscall& GetSyscall() { return syscall_; }
-  std::stack<ParenType>& GetParened() { return parened_; }
-
-  bool operator==(const PidNode& rhs) const { return (pid_ == rhs.pid_); }
-
- private:
-  pid_t pid_ = 0;
-  bool forked_ = false;
-  Syscall syscall_;
-  std::stack<ParenType> parened_;
-
-  PidNode* parent_ = nullptr;
-  std::list<PidNode> childs_;
-};
-
-class Option;
 class Parser {
  public:
-  Parser(Option& option) : option_(option) {}
+  Parser(std::string_view str)
+      : lexer_(str.data(), str.data(), str.data() + str.size()) {}
+  Parser(Lexer& lexer) : lexer_(lexer) {}
 
-  bool Parse();
+  const Token& GetCurToken() const { return tok_; }
 
-  const Option& GetOption() const { return option_; }
-  const PidNode& GetPidRoot() const { return pid_root_; }
+  void Lex(Token& result);
+  void Parse();
 
  private:
-  enum class LogState { kNormal, kComment };
-  enum class ProcExitType { kInvalid, kExited, kKilled };
+  bool IsTokenParen() const {
+    return tok_.IsOneOfKind(tok::l_paren, tok::r_paren);
+  }
+  bool IsTokenBracket() const {
+    return tok_.IsOneOfKind(tok::l_square, tok::r_square);
+  }
+  bool IsTokenBrace() const {
+    return tok_.IsOneOfKind(tok::l_brace, tok::r_brace);
+  }
+  bool IsTokenStringLiteral() const { return tok_.IsKind(tok::string_literal); }
+  bool IsTokenSpecial() const {
+    return IsTokenStringLiteral() || IsTokenParen() || IsTokenBracket() ||
+           IsTokenBrace();
+  }
 
-  bool ParseFromFilepath(const std::string& log_path);
-  bool ParseFromFile(FILE* file);
-  bool ParseLine(std::string line);
-  bool ParsePid();
-  bool ParseCall();
-  bool ParseParams();
-  void SkipWhitespace();
+  void ConsumeParen() {
+    assert(IsTokenParen() && "wrong consume method");
+    if (tok::l_paren == tok_.GetKind())
+      ++parens_;
+    else if (parens_)
+      --parens_;
+    Lex(tok_);
+  }
 
-  ProcExitType ProcExit(std::string& code);
+  void ConsumeBracket() {
+    assert(IsTokenBracket() && "wrong consume method");
+    if (tok::l_square == tok_.GetKind())
+      ++brackets_;
+    else if (brackets_)
+      --brackets_;
+    Lex(tok_);
+  }
 
-  Option& option_;
+  void ConsumeBrace() {
+    assert(IsTokenBrace() && "wrong consume method");
+    if (tok::l_brace == tok_.GetKind())
+      ++braces_;
+    else if (braces_)
+      --braces_;
+    Lex(tok_);
+  }
 
-  PidNode pid_root_;
-  PidNode* cur_pid_ = &pid_root_;
+  void ConsumeStringToken() {
+    assert(IsTokenStringLiteral() &&
+           "Should only consume string literals with this method");
+    Lex(tok_);
+  }
 
-  Cursor log_;
+  void CutOffParsing() { tok_.SetKind(tok::eof); }
 
-  LogState state_ = LogState::kNormal;
+  bool IsEof() const { return tok::eof == tok_.GetKind(); }
+
+  Token GetLookAheadToken(size_t n) {
+    if (0 == n || tok_.IsKind(tok::eof)) return tok_;
+    return LookAhead(n - 1);
+  }
+
+  Token LookAhead(size_t n) { return PeekAhead(n + 1); }
+
+  Token PeekAhead(size_t n);
+
+  void ParsePID();
+
+  Lexer lexer_;
+
+  Token tok_;
+
+  unsigned short parens_ = 0;
+  unsigned short brackets_ = 0;
+  unsigned short braces_ = 0;
 };
+
+}  // namespace strazer
 
 #endif

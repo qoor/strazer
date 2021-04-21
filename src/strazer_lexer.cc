@@ -1,9 +1,29 @@
 #include "strazer_lexer.h"
 
+#include <memory>
+
+#include "llvm/Support/ConvertUTF.h"
 #include "strazer_token.h"
 #include "strazer_utils.h"
 
 using namespace strazer;
+
+Lexer::Lexer(const char* buf_start, const char* buf_ptr, const char* buf_end) {
+  InitLexer(buf_start, buf_ptr, buf_end);
+}
+
+void Lexer::InitLexer(const char* buf_start, const char* buf_ptr,
+                      const char* buf_end) {
+  buf_start_ = buf_start;
+  buf_ptr_ = buf_ptr;
+  buf_end_ = buf_end;
+
+  assert(0 == buf_end[0] &&
+         "We assume that the input buffer has a null character at the end to "
+         "simplify lexing!");
+
+  idents_.AddKeywords();
+}
 
 bool Lexer::Lex(Token& result) {
   result.StartToken();
@@ -11,10 +31,17 @@ bool Lexer::Lex(Token& result) {
 LexNextToken:
   result.SetIdentifierInfo(nullptr);
 
-  SkipWhitespace();
   const char* cur_ptr = buf_ptr_;
 
-  size_t tmp;
+  if (IsHorizontalWhitespace(*cur_ptr)) {
+    do {
+      ++cur_ptr;
+    } while (IsHorizontalWhitespace(*cur_ptr));
+
+    buf_ptr_ = cur_ptr;
+  }
+
+  size_t tmp, tmp2;
 
   char c = GetAndAdvanceChar(cur_ptr);
   tok::TokenKind kind;
@@ -29,6 +56,7 @@ LexNextToken:
       [[fallthrough]];
     }
     case '\n': {
+      SkipWhitespace(cur_ptr);
       goto LexNextToken;
     }
 
@@ -62,14 +90,17 @@ LexNextToken:
     case 'H':
     case 'I':
     case 'J':
-    case 'K': /*'L'*/
+    case 'K':
+    case 'L':
     case 'M':
     case 'N':
     case 'O':
     case 'P':
-    case 'Q': /*'R'*/
+    case 'Q':
+    case 'R':
     case 'S':
-    case 'T': /*'U'*/
+    case 'T':
+    case 'U':
     case 'V':
     case 'W':
     case 'X':
@@ -94,14 +125,14 @@ LexNextToken:
     case 'q':
     case 'r':
     case 's':
-    case 't': /*'u'*/
+    case 't':
+    case 'u':
     case 'v':
     case 'w':
     case 'x':
     case 'y':
     case 'z':
     case '_': {
-      // Notify MIOpt that we read a non-whitespace/non-comment token.
       return LexIdentifier(result, cur_ptr);
     }
 
@@ -144,12 +175,25 @@ LexNextToken:
       kind = tok::r_brace;
       break;
     }
-    case '*': {
-      if ('*' == cur_ptr[0] && '*' == cur_ptr[1]) {
-        kind = tok::triple_star;
-        break;
+    case '+': {
+      c = GetCharAndSize(cur_ptr, tmp);
+      if ('+' == c) {
+        char after = GetCharAndSize(cur_ptr + tmp, tmp2);
+        if ('+' == c) {
+          kind = tok::plusplusplus;
+          cur_ptr = ConsumeChar(ConsumeChar(cur_ptr, tmp), tmp2);
+          break;
+        }
       }
       [[fallthrough]];
+    }
+    case '-': {
+      c = GetCharAndSize(cur_ptr, tmp);
+      if ('>' == c)
+        kind = tok::arrow;
+      else
+        kind = tok::minus;
+      break;
     }
     case '~': {
       kind = tok::tilde;
@@ -162,7 +206,9 @@ LexNextToken:
     case '/': {
       c = GetCharAndSize(cur_ptr, tmp);
       if ('*' == c) {
-        if (SkipBlockComment(result, ConsumeChar(cur_ptr, tmp))) return true;
+        printf("comment start\n");
+        if (SkipBlockComment(ConsumeChar(cur_ptr, tmp))) return true;
+        printf("comment end\n");
         goto LexNextToken;
       } else {
         kind = tok::slash;
@@ -195,10 +241,8 @@ LexNextToken:
     }
 
     default: {
-      if (IsASCII(c)) {
-        kind = tok::unknown;
-        break;
-      }
+      kind = tok::unknown;
+      break;
     }
   }
 
@@ -206,32 +250,58 @@ LexNextToken:
   return true;
 }
 
-void Lexer::SkipWhitespace() {
-  unsigned char c = *buf_ptr_;
-  while (IsHorizontalWhitespace(c)) c = *++buf_ptr_;
+void Lexer::SkipWhitespace(const char* cur_ptr) {
+  unsigned char c = *cur_ptr;
+
+  while (true) {
+    while (IsHorizontalWhitespace(c)) c = *++cur_ptr;
+
+    if (!IsVerticalWhitespace(c)) break;
+
+    c = *++cur_ptr;
+  }
+
+  buf_ptr_ = cur_ptr;
 }
 
-void Lexer::FormTokenWithChars(Token& result, const char* tok_end,
-                               tok::TokenKind kind) {
-  const size_t tok_len = tok_end - buf_ptr_;
-  result.SetLocation(buf_ptr_ - buf_start_);
-  result.SetKind(kind);
-  result.SetSize(tok_len);
-  buf_ptr_ = tok_end;
+bool Lexer::LexIdentifier(Token& result, const char* cur_ptr) {
+  size_t size;
+  unsigned char c = *cur_ptr++;
+  while (IsIdentifierBody(c)) c = *cur_ptr++;
+
+  --cur_ptr;
+
+  if (IsASCII(c) && '\\' != c) {
+  finish_identifier:
+    const char* id_start = buf_ptr_;
+    FormTokenWithChars(result, cur_ptr, tok::raw_identifier);
+    result.SetRawIdentifierData(id_start);
+
+    LookUpIdentifierInfo(result);
+    return true;
+  }
+
+  c = GetCharAndSize(cur_ptr, size);
+  while (true) {
+    if (!IsIdentifierBody(c)) goto finish_identifier;
+
+    cur_ptr = ConsumeChar(cur_ptr, size);
+
+    c = GetCharAndSize(cur_ptr, size);
+    while (IsIdentifierBody(c)) {
+      cur_ptr = ConsumeChar(cur_ptr, size);
+      c = GetCharAndSize(cur_ptr, size);
+    }
+  }
 }
 
 bool Lexer::LexNumericConstant(Token& result, const char* cur_ptr) {
   size_t size;
   char c = GetCharAndSize(cur_ptr, size);
-  char prev_c = 0;
   while (IsPreprocessingNumberBody(c)) {
     cur_ptr = ConsumeChar(cur_ptr, size);
-    prev_c = c;
     c = GetCharAndSize(cur_ptr, size);
   }
-
-  if ('-' == c && !IsHexaLiteral(buf_ptr_))
-    return LexNumericConstant(result, ConsumeChar(cur_ptr, size));
 
   const char* tok_start = buf_ptr_;
   FormTokenWithChars(result, cur_ptr, tok::numeric_constant);
@@ -294,11 +364,7 @@ static bool IsEndOfBlockCommentWithEscapedNewLine(const char* cur_ptr) {
     --cur_ptr;
   }
 
-  bool has_space = false;
-  while (IsHorizontalWhitespace(*cur_ptr) || 0 == *cur_ptr) {
-    --cur_ptr;
-    has_space = true;
-  }
+  while (IsHorizontalWhitespace(*cur_ptr) || 0 == *cur_ptr) --cur_ptr;
 
   if ('\\' == *cur_ptr) {
     if ('*' != cur_ptr[-1]) return false;
@@ -354,10 +420,28 @@ bool Lexer::SkipBlockComment(const char* cur_ptr) {
   }
 
   if (IsHorizontalWhitespace(*cur_ptr)) {
-    SkipWhitespace();
+    SkipWhitespace(cur_ptr);
     return false;
   }
 
   buf_ptr_ = cur_ptr;
   return false;
+}
+
+bool Lexer::IsHexaLiteral(const char* start) {
+  size_t size;
+  char c1 = GetCharAndSize(start, size);
+  if ('0' != c1) return false;
+  char c2 = GetCharAndSize(start + size, size);
+  return ('x' == c2 || 'X' == c2);
+}
+
+IdentifierInfo* Lexer::LookUpIdentifierInfo(Token& identifier) const {
+  assert(!identifier.GetRawIdentifier().empty() && "No raw identifier data!");
+
+  IdentifierInfo* ident_info;
+  ident_info = GetIdentifierInfo(identifier.GetRawIdentifier());
+  identifier.SetIdentifierInfo(ident_info);
+  identifier.SetKind(ident_info->GetTokenID());
+  return ident_info;
 }

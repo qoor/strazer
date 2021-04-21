@@ -3,8 +3,11 @@
 
 #include <cassert>
 #include <cctype>
+#include <cstdio>
+#include <string>
 #include <string_view>
 
+#include "strazer_identifier_table.h"
 #include "strazer_token_kinds.h"
 
 namespace strazer {
@@ -17,15 +20,20 @@ class Token {
   void SetKind(tok::TokenKind kind) { kind_ = kind; }
 
   bool IsKind(tok::TokenKind kind) const { return kind_ == kind; }
-  bool IsNotKind(tok::TokenKind kind) const { return kind_ == kind; }
+  bool IsNotKind(tok::TokenKind kind) const { return kind_ != kind; }
+  bool IsOneOfKind(tok::TokenKind k1, tok::TokenKind k2) const {
+    return kind_ == k1 || kind_ == k2;
+  }
+
+  bool IsAnyIdentifier() const { return tok::IsAnyIdentifier(GetKind()); }
 
   bool IsLiteral() const { return tok::IsLiteral(kind_); }
 
   size_t GetLocation() const { return pos_; }
-  uint32_t GetSize() const { return size_; }
+  uint32_t GetLength() const { return size_; }
 
   void SetLocation(size_t pos) { pos_ = pos; }
-  void SetSize(uint32_t size) { size_ = size; }
+  void SetLength(uint32_t size) { size_ = size; }
 
   const char* GetName() const { return tok::GetTokenName(kind_); }
 
@@ -37,6 +45,8 @@ class Token {
   }
 
   IdentifierInfo* GetIdentifierInfo() const {
+    assert(IsNotKind(tok::raw_identifier) &&
+           "GetIdentifierInfo() on a tok::raw_identifier token!");
     if (IsLiteral() || IsKind(tok::eof)) return nullptr;
     return reinterpret_cast<IdentifierInfo*>(ptr_data_);
   }
@@ -52,13 +62,36 @@ class Token {
     ptr_data_ = const_cast<void*>(data);
   }
 
+  std::string_view GetRawIdentifier() const {
+    assert(IsKind(tok::raw_identifier));
+    return std::string_view(reinterpret_cast<const char*>(ptr_data_),
+                            GetLength());
+  }
+  void SetRawIdentifierData(const char* ptr) {
+    assert(IsKind(tok::raw_identifier));
+    ptr_data_ = const_cast<char*>(ptr);
+  }
+
   const char* GetLiteralData() const {
-    assert(IsLiteral());
+    assert(IsLiteral() && "Cannot get literal data of non-literal");
     return reinterpret_cast<const char*>(ptr_data_);
   }
   void SetLiteralData(const char* data) {
     assert(IsLiteral() && "Cannot set literal data of non-literal");
     ptr_data_ = const_cast<char*>(data);
+  }
+
+  void Print() const {
+#ifndef NDEBUG
+    if (IsKind(tok::identifier))
+      printf("Token kind(%s) identifier(%s)\n", tok::GetTokenName(kind_),
+             std::string(GetIdentifierInfo()->GetName()).c_str());
+    else if (ptr_data_)
+      printf("Token kind(%s) data(%s)\n", tok::GetTokenName(kind_),
+             std::string((char*)ptr_data_, size_).c_str());
+    else
+      printf("Token kind(%s)\n", tok::GetTokenName(kind_));
+#endif
   }
 
  private:

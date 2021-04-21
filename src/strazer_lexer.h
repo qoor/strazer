@@ -2,27 +2,39 @@
 #define _STRAZER_LEXER_H
 
 #include <string>
+#include <vector>
 
+#include "strazer_identifier_table.h"
+#include "strazer_token.h"
 #include "strazer_token_kinds.h"
+#include "strazer_utils.h"
 
 namespace strazer {
 
-class Token;
-
 class Lexer {
  public:
-  Lexer(const std::string& file);
   Lexer(const char* buf_start, const char* buf_ptr, const char* buf_end);
+
+  void InitLexer(const char* buf_start, const char* buf_ptr,
+                 const char* buf_end);
+
+  bool Lex(Token& result);
 
  private:
   static bool IsObviouslySimpleCharacter(char c) { return '\\' != c; }
 
-  bool Lex(Token& result);
-  void SkipWhitespace();
+  void SkipWhitespace(const char* cur_ptr);
   void FormTokenWithChars(Token& result, const char* tok_end,
-                          tok::TokenKind kind);
+                          tok::TokenKind kind) {
+    const size_t tok_len = tok_end - buf_ptr_;
+    assert(0 < tok_len && "Invalid token length");
+    result.SetLocation(buf_ptr_ - buf_start_);
+    result.SetKind(kind);
+    result.SetLength(tok_len);
+    buf_ptr_ = tok_end;
+  }
 
-  inline char GetAndAdvanceChar(const char* ptr) {
+  inline char GetAndAdvanceChar(const char*& ptr) {
     if (IsObviouslySimpleCharacter(ptr[0])) return *ptr++;
 
     size_t size = 0;
@@ -50,10 +62,11 @@ class Lexer {
   }
 
   inline char GetCharAndSizeSlow(const char* ptr, size_t& size) {
-    if ('\\' == ptr[0]) ++size;
-    return '\\';
+    ++size;
+    return *ptr;
   }
 
+  bool LexIdentifier(Token& result, const char* cur_ptr);
   bool LexNumericConstant(Token& result, const char* cur_ptr);
   bool LexStringLiteral(Token& result, const char* cur_ptr,
                         tok::TokenKind kind);
@@ -61,9 +74,19 @@ class Lexer {
 
   bool SkipBlockComment(const char* cur_ptr);
 
+  bool IsHexaLiteral(const char* start);
+
+  IdentifierInfo* LookUpIdentifierInfo(Token& identifier) const;
+
+  IdentifierInfo* GetIdentifierInfo(std::string_view name) const {
+    return &idents_.Get(name);
+  }
+
   const char* buf_start_;
   const char* buf_ptr_;
   const char* buf_end_;
+
+  mutable IdentifierTable idents_;
 };
 
 }  // namespace strazer

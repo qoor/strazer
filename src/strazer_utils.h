@@ -2,6 +2,7 @@
 #define _STRAZER_UTILS_H
 
 #include <cinttypes>
+#include <memory>
 #include <string_view>
 
 namespace strazer {
@@ -107,6 +108,81 @@ inline bool IsValidIdentifier(std::string_view s) {
   }
 
   return true;
+}
+
+inline bool IsPreprocessingNumberBody(unsigned char c) {
+  using namespace charinfo;
+  return ((CHAR_UPPER | CHAR_LOWER | CHAR_DIGIT | CHAR_UNDER | CHAR_PERIOD) &
+          g_info_table[c]) != 0;
+}
+
+class MemoryBuffer {
+ public:
+  enum BufferKind { kBufferMalloc, kBufferMmap };
+
+  static std::unique_ptr<MemoryBuffer> GetFileOrSTDIN(std::string_view file,
+                                                      bool text = false,
+                                                      bool null = true);
+
+  static std::unique_ptr<MemoryBuffer> GetFile(std::string_view file,
+                                               bool text = false,
+                                               bool null = true);
+
+  virtual ~MemoryBuffer();
+
+  const char* GetBufferStart() const { return buf_start_; }
+  const char* GetBufferEnd() const { return buf_end_; }
+  size_t GetBufferSize() const { return buf_end_ - buf_start_; }
+
+  std::string_view GetBuffer() const {
+    return std::string_view(GetBufferStart(), GetBufferSize());
+  }
+
+  virtual std::string_view GetBufferIdentifier() const {
+    return "Unknown buffer";
+  }
+
+  virtual BufferKind GetBufferKind() const = 0;
+
+ protected:
+  MemoryBuffer() = default;
+
+  void Init(const char* buf_start, const char* buf_end, bool null);
+
+ private:
+  const char* buf_start_;
+  const char* buf_end_;
+};
+
+class WritableMemoryBuffer : public MemoryBuffer {
+ public:
+  static std::unique_ptr<WritableMemoryBuffer> GetNewUninitMemBuffer(
+      size_t size, std::string_view buf_name = "");
+  static std::unique_ptr<WritableMemoryBuffer> GetNewMemBuffer(
+      size_t size, std::string_view buf_name = "");
+
+  char* GetBufferStart() {
+    return const_cast<char*>(MemoryBuffer::GetBufferStart());
+  }
+  char* GetBufferEnd() {
+    return const_cast<char*>(MemoryBuffer::GetBufferEnd());
+  }
+
+  std::string_view GetBuffer() {
+    char* buf_start = GetBufferStart();
+    return std::string_view(buf_start, GetBufferSize());
+  }
+
+ protected:
+  WritableMemoryBuffer() = default;
+
+ private:
+  using MemoryBuffer::GetFile;
+  using MemoryBuffer::GetFileOrSTDIN;
+};
+
+namespace process {
+size_t GetPageSize();
 }
 
 }  // namespace strazer
