@@ -15,6 +15,8 @@ namespace strazer {
 
 class Parser {
  public:
+  enum State { kStateNone, kStatePid, kStateSymbol, kStateReturn };
+
   Parser(std::string_view str)
       : lexer_(str.data(), str.data(), str.data() + str.size()) {}
   Parser(Lexer& lexer) : lexer_(lexer) {}
@@ -22,9 +24,22 @@ class Parser {
   const Token& GetCurToken() const { return tok_; }
 
   void Lex(Token& result);
-  void Parse();
+
+  void Initialize();
+
+  bool Parse();
 
  private:
+  bool ParsePid();
+  bool ParseSyscall();
+
+  size_t ConsumeToken() {
+    assert(!IsTokenSpecial() && "Should consume special with Consume*Token");
+    size_t prev_tok_location = tok_.GetLocation();
+    lexer_.Lex(tok_);
+    return prev_tok_location;
+  }
+
   bool IsTokenParen() const {
     return tok_.IsOneOfKind(tok::l_paren, tok::r_paren);
   }
@@ -86,8 +101,6 @@ class Parser {
 
   Token PeekAhead(size_t n);
 
-  void ParsePID();
-
   Lexer lexer_;
 
   Token tok_;
@@ -95,7 +108,11 @@ class Parser {
   unsigned short parens_ = 0;
   unsigned short brackets_ = 0;
   unsigned short braces_ = 0;
+
+  State state_ = kStateNone;
 };
+
+void ParseAST(Lexer& lexer);
 
 }  // namespace strazer
 

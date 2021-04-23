@@ -11,35 +11,29 @@ void Parser::Lex(Token& result) {
   if (result.IsKind(tok::unknown)) return;
 }
 
-void Parser::Parse() {
-  Token tok;
+void Parser::Initialize() { ConsumeToken(); }
 
-  while (true) {
-    Lex(tok);
-    tok.Print();
-    switch (tok.GetKind()) {
-      case tok::numeric_constant: {
-        ParsePID();
-        break;
-      }
-
-      case tok::unknown: {
-        printf("Unknown symbol\n");
-        break;
-      }
-
-      default: {
-        break;
-      }
+bool Parser::Parse() {
+  assert(kStateNone == state_);
+  switch (tok_.GetKind()) {
+    case tok::eof: {
+      return true;
     }
-
-    if (tok.IsKind(tok::eof)) break;
-
-    tok_ = tok;
+    case tok::numeric_constant: {
+      ParsePid();
+      return false;
+    }
+    case tok::identifier: {
+      ParseSyscall();
+      return false;
+    }
+    default: {
+      return true;
+    }
   }
 }
 
-void Parser::ParsePID() {}
+bool Parser::ParsePid() { ParseSyscall(); }
 
 Token Parser::PeekAhead(size_t n) {
   Token tok;
@@ -47,4 +41,18 @@ Token Parser::PeekAhead(size_t n) {
     Lex(tok);
   }
   return tok;
+}
+
+void ParseAST(Lexer& lexer) {
+  auto parse_op = std::make_unique<Parser>(lexer);
+  if (!parse_op) {
+    printf("Failed to create parser instance.\n");
+    return;
+  }
+
+  auto& p = *parse_op.get();
+  p.Initialize();
+  for (bool at_eof = p.Parse(); !at_eof; at_eof = p.Parse()) {
+    continue;
+  }
 }
